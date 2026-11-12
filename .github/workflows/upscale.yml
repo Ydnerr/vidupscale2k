@@ -1,0 +1,60 @@
+name: Convert Video to 2K
+
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Path video di repo (contoh: input/video.mp4)"
+        required: true
+        default: "input/video.mp4"
+      mode:
+        description: "keep = rasio asli, pad = kanvas 2K penuh + bar hitam"
+        type: choice
+        options:
+          - keep
+          - pad
+        default: keep
+      crf:
+        description: "Kualitas (16 = bagus, 23 = kecil)"
+        required: true
+        default: "18"
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Convert ke 2K
+        run: |
+          mkdir -p output
+          IN="${{ inputs.file }}"
+
+          W=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$IN")
+          H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$IN")
+          echo "Resolusi asli: ${W}x${H}"
+
+          if [ "${{ inputs.mode }}" = "keep" ]; then
+            # sisi pendek jadi 1440, rasio asli tetap
+            VF="scale='if(gt(iw,ih),-2,1440)':'if(gt(iw,ih),1440,-2)':flags=lanczos"
+          else
+            # kanvas 2K penuh, video dimuat di dalamnya + bar hitam
+            if [ "$W" -ge "$H" ]; then CW=2560; CH=1440; else CW=1440; CH=2560; fi
+            VF="scale=${CW}:${CH}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${CW}:${CH}:(ow-iw)/2:(oh-ih)/2:black"
+          fi
+
+          ffmpeg -i "$IN" -vf "$VF,setsar=1" \
+            -c:v libx264 -crf ${{ inputs.crf }} -preset medium \
+            -pix_fmt yuv420p -c:a copy -movflags +faststart \
+            output/video_2k.mp4
+
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 output/video_2k.mp4
+
+      - name: Upload hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-2k
+          path: output/video_2k.mp4
